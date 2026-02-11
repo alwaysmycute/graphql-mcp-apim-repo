@@ -76,34 +76,6 @@ export function registerAllTools(server) {
         console.warn(`Failed to register alias ${camelAlias}: ${e.message}`);
       }
     }
-    // also register legacy namespaced aliases used by some clients
-    const legacyPrefix = 'taitra-graphql-mcp:';
-    const namespaced = `${legacyPrefix}${tool.name}`;
-    try {
-      server.tool(
-        namespaced,
-        `${tool.description} (namespaced alias for ${tool.name})`,
-        tool.parameters,
-        tool.handler
-      );
-      console.log(`Registered namespaced alias: ${namespaced} -> ${tool.name}`);
-    } catch (e) {
-      console.warn(`Failed to register namespaced alias ${namespaced}: ${e.message}`);
-    }
-    if (camelAlias !== tool.name) {
-      const namespacedCamel = `${legacyPrefix}${camelAlias}`;
-      try {
-        server.tool(
-          namespacedCamel,
-          `${tool.description} (namespaced alias for ${camelAlias})`,
-          tool.parameters,
-          tool.handler
-        );
-        console.log(`Registered namespaced alias: ${namespacedCamel} -> ${camelAlias}`);
-      } catch (e) {
-        console.warn(`Failed to register namespaced alias ${namespacedCamel}: ${e.message}`);
-      }
-    }
   }
 
   console.log(`Total tools registered: ${toolModules.length}`);
