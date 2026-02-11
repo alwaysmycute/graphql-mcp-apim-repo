@@ -21,19 +21,26 @@ export function buildHeaders(subscriptionKey) {
 /**
  * 執行 GraphQL 查詢
  *
+ * APIM GraphQL 端點使用 inline arguments 模式，
+ * 所有參數已嵌入 query string，不需要 variables。
+ *
  * @param {Object} options
  * @param {string} options.endpoint - APIM GraphQL API endpoint URL
  * @param {string} options.subscriptionKey - APIM Subscription Key (Ocp-Apim-Subscription-Key)
- * @param {string} options.query - GraphQL query string
- * @param {Object} [options.variables={}] - GraphQL variables
+ * @param {string} options.query - GraphQL query string (含 inline arguments)
+ * @param {Object} [options.variables] - GraphQL variables（可選，APIM 不支援 variable definitions）
  * @returns {Promise<Object>} GraphQL response data
  * @throws {Error} 如果 HTTP 請求失敗或 GraphQL 回傳錯誤
  */
-export async function executeGraphQL({ endpoint, subscriptionKey, query, variables = {} }) {
+export async function executeGraphQL({ endpoint, subscriptionKey, query, variables }) {
+  const requestBody = variables && Object.keys(variables).length > 0
+    ? { query, variables }
+    : { query };
+
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: buildHeaders(subscriptionKey),
-    body: JSON.stringify({ query, variables }),
+    body: JSON.stringify(requestBody),
   });
 
   if (!response.ok) {

@@ -70,7 +70,51 @@ export const RESOLVER_REGISTRY = {
 };
 
 /**
- * 建構 GraphQL 查詢字串
+ * GraphQL enum values — 在 query 中不加引號
+ */
+const GRAPHQL_ENUMS = new Set(['ASC', 'DESC']);
+
+/**
+ * 將 JavaScript 值轉換為 GraphQL inline literal 格式
+ *
+ * APIM GraphQL 端點不支援 variable definitions ($var)，
+ * 所有參數必須以 inline literal 嵌入 query string。
+ *
+ * 轉換規則：
+ * - number/boolean → 直接輸出 (2024, true)
+ * - string (enum)  → 不加引號 (ASC, DESC)
+ * - string (一般)  → 加引號 ("出口", "US")
+ * - array          → [item1, item2]
+ * - object         → { key1: val1, key2: val2 } (key 不加引號)
+ * - null/undefined → null
+ *
+ * @param {any} value - 要轉換的值
+ * @returns {string} GraphQL literal 字串
+ */
+export function toGraphQLLiteral(value) {
+  if (value === null || value === undefined) return 'null';
+  if (typeof value === 'number') return String(value);
+  if (typeof value === 'boolean') return String(value);
+  if (typeof value === 'string') {
+    if (GRAPHQL_ENUMS.has(value)) return value;
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(v => toGraphQLLiteral(v)).join(', ')}]`;
+  }
+  if (typeof value === 'object') {
+    const entries = Object.entries(value)
+      .map(([k, v]) => `${k}: ${toGraphQLLiteral(v)}`);
+    return `{ ${entries.join(', ')} }`;
+  }
+  return String(value);
+}
+
+/**
+ * 建構 GraphQL 查詢字串（inline arguments 模式）
+ *
+ * APIM GraphQL 端點要求所有參數以 inline literal 嵌入 query，
+ * 不支援 variable definitions ($first: Int 等語法)。
  *
  * @param {string} resolverKey - RESOLVER_REGISTRY 中的 key
  * @param {Object} params - 查詢參數
@@ -81,7 +125,7 @@ export const RESOLVER_REGISTRY = {
  * @param {string[]} [params.fields] - 指定回傳欄位 (預設回傳所有欄位)
  * @param {string[]} [params.groupBy] - 分組欄位列表
  * @param {Array} [params.aggregations] - 聚合操作列表 [{field, function}]
- * @returns {Object} { query: string, variables: Object }
+ * @returns {Object} { query: string }
  */
 export function buildQuery(resolverKey, params = {}) {
   const config = RESOLVER_REGISTRY[resolverKey];
@@ -91,48 +135,23 @@ export function buildQuery(resolverKey, params = {}) {
 
   const { first, after, filter, orderBy, fields, groupBy, aggregations } = params;
 
-  // 建構查詢參數
+  // 建構 inline arguments
   const queryArgs = [];
-  const variables = {};
-  const varDefs = [];
 
   if (first !== undefined && first !== null) {
-    varDefs.push('$first: Int');
-    queryArgs.push('first: $first');
-    variables.first = first;
+    queryArgs.push(`first: ${toGraphQLLiteral(first)}`);
   }
 
   if (after !== undefined && after !== null) {
-    varDefs.push('$after: String');
-    queryArgs.push('after: $after');
-    variables.after = after;
+    queryArgs.push(`after: ${toGraphQLLiteral(after)}`);
   }
 
   if (filter && Object.keys(filter).length > 0) {
-    // GraphQL input types are typically singular (e.g., '..._countryFilterInput')
-    let queryBaseName = config.queryName || resolverKey;
-    if (queryBaseName.endsWith('ies')) {
-      queryBaseName = queryBaseName.slice(0, -3) + 'y';
-    } else if (queryBaseName.endsWith('s')) {
-      queryBaseName = queryBaseName.slice(0, -1);
-    }
-    const filterTypeName = `${queryBaseName}FilterInput`;
-    varDefs.push(`$filter: ${filterTypeName}`);
-    queryArgs.push('filter: $filter');
-    variables.filter = filter;
+    queryArgs.push(`filter: ${toGraphQLLiteral(filter)}`);
   }
 
   if (orderBy && Object.keys(orderBy).length > 0) {
-    let queryBaseName = config.queryName || resolverKey;
-    if (queryBaseName.endsWith('ies')) {
-      queryBaseName = queryBaseName.slice(0, -3) + 'y';
-    } else if (queryBaseName.endsWith('s')) {
-      queryBaseName = queryBaseName.slice(0, -1);
-    }
-    const orderByTypeName = `${queryBaseName}OrderByInput`;
-    varDefs.push(`$orderBy: ${orderByTypeName}`);
-    queryArgs.push('orderBy: $orderBy');
-    variables.orderBy = orderBy;
+    queryArgs.push(`orderBy: ${toGraphQLLiteral(orderBy)}`);
   }
 
   // 決定回傳欄位
@@ -144,8 +163,6 @@ export function buildQuery(resolverKey, params = {}) {
   const itemsBlock = selectedFields.join('\n          ');
 
   // 建構 groupBy 部分
-  // groupBy 是 Connection type 上的欄位，接受 fields 參數（ScalarFields enum 陣列）
-  // 回傳 GroupBy type，包含 fields（分組欄位值）和 aggregations（聚合結果）
   let groupByBlock = '';
   if (groupBy && groupBy.length > 0) {
     const groupByFields = groupBy.filter(f => config.fields.includes(f));
@@ -160,11 +177,10 @@ export function buildQuery(resolverKey, params = {}) {
       }`;
   }
 
-  // 組合完整查詢
+  // 組合完整查詢（無 variable definitions）
   const argsStr = queryArgs.length > 0 ? `(${queryArgs.join(', ')})` : '';
-  const varDefsStr = varDefs.length > 0 ? `(${varDefs.join(', ')})` : '';
 
-  const query = `query TradeQuery${varDefsStr} {
+  const query = `query {
     ${config.queryName}${argsStr} {
       items {
         ${itemsBlock}
@@ -174,11 +190,10 @@ export function buildQuery(resolverKey, params = {}) {
     }
   }`;
 
-  console.log('[Resolver used]', config.queryName);
-  console.log('variables', variables);
+  console.log('[buildQuery] resolver:', config.queryName);
+  console.log('[buildQuery] inline args:', argsStr);
 
-
-  return { query, variables };
+  return { query };
 }
 
 /**

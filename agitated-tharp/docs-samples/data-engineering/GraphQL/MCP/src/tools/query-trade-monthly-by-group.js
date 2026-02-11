@@ -182,22 +182,21 @@ const buildFilterFromParams = (params) => {
 
 
 export const execute = async (params) => {
+  const filter = buildFilterFromParams(params);
   const normalizedParams = {
-    filter: buildFilterFromParams(params),
+    filter,
     orderBy: params.order ? { PERIOD_MONTH: params.order } : undefined,
     first: params.first ?? 50,
   };
 
   try {
-    // Use the resolver key that matches the RESOLVER_REGISTRY
     const RESOLVER = 'trade_monthly_by_group_country';
-    const { query, variables } = buildQuery(RESOLVER, normalizedParams);
+    const { query } = buildQuery(RESOLVER, normalizedParams);
 
     const result = await executeGraphQL({
       endpoint: config.graphqlEndpoint,
       subscriptionKey: config.subscriptionKey,
       query,
-      variables,
     });
 
     return {
