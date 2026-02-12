@@ -26,8 +26,8 @@ export const config = {
   // 預設分頁筆數
   defaultPageSize: parseInt(process.env.DEFAULT_PAGE_SIZE || '100', 10),
 
-  // 最大分頁筆數
-  maxPageSize: parseInt(process.env.MAX_PAGE_SIZE || '5000', 10),
+  // 最大分頁筆數（APIM/Fabric 回應大小有限制，all fields × 2000+ items 會 500）
+  maxPageSize: parseInt(process.env.MAX_PAGE_SIZE || '1000', 10),
 };
 
 /**

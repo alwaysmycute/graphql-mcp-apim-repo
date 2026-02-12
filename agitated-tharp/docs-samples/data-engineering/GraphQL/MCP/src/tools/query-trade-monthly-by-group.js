@@ -186,7 +186,7 @@ export const execute = async (params) => {
   const normalizedParams = {
     filter,
     orderBy: params.order ? { PERIOD_MONTH: params.order } : undefined,
-    first: params.first ?? 50,
+    first: Math.min(params.first ?? 50, config.maxPageSize),
   };
 
   try {
