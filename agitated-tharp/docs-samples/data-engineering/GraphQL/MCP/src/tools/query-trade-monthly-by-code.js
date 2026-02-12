@@ -112,7 +112,7 @@ export const parameters = z.object({
 export async function handler(params) {
   try {
     const first = Math.min(params.first || config.defaultPageSize, config.maxPageSize);
-    const { query, variables } = buildQuery('trade_monthly_by_code_country', {
+    const { query } = buildQuery('trade_monthly_by_code_country', {
       ...params,
       first,
     });
@@ -121,7 +121,6 @@ export async function handler(params) {
       endpoint: config.graphqlEndpoint,
       subscriptionKey: config.subscriptionKey,
       query,
-      variables,
     });
 
     return {

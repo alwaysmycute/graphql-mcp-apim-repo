@@ -120,15 +120,11 @@ export function toGraphQLLiteral(value) {
 }
 
 /**
- * 建構 GraphQL 查詢字串（variable definitions 模式）
+ * 建構 GraphQL 查詢字串（inline arguments 模式）
  *
- * APIM resolver policy 會忽略 client 的 query，自行建構帶 $variable 定義的 query，
- * 並從 request body 的 "variables" 欄位讀取變數值。
- * 因此 client 必須：
- * 1. 在 query 中使用 $variable definitions（如 $filter: ...FilterInput）
- * 2. 在 request body 中傳送 variables 物件
- *
- * 注意：groupBy 與 aggregations 使用 inline arguments（DAB/Fabric schema 無對應 variable type）。
+ * APIM 使用 pass-through resolver policy，將 client 的 query 直接轉發到 Fabric backend。
+ * 因此所有參數必須以 inline literal 嵌入 query string。
+ * APIM GraphQL parser 不支援 $variable definitions（會產生 parse error）。
  *
  * @param {string} resolverKey - RESOLVER_REGISTRY 中的 key
  * @param {Object} params - 查詢參數
@@ -149,39 +145,23 @@ export function buildQuery(resolverKey, params = {}) {
 
   const { first, after, filter, orderBy, fields, groupBy, aggregations } = params;
 
-  // 建構 variable definitions 與 variables 物件
-  const varDefs = [];    // e.g. '$first: Int'
-  const queryArgs = [];  // e.g. 'first: $first'
-  const variables = {};  // e.g. { first: 50 }
+  // 建構 inline arguments
+  const queryArgs = [];
 
   if (first !== undefined && first !== null) {
-    varDefs.push('$first: Int');
-    queryArgs.push('first: $first');
-    variables.first = first;
+    queryArgs.push(`first: ${toGraphQLLiteral(first)}`);
   }
 
   if (after !== undefined && after !== null) {
-    varDefs.push('$after: String');
-    queryArgs.push('after: $after');
-    variables.after = after;
+    queryArgs.push(`after: ${toGraphQLLiteral(after)}`);
   }
 
   if (filter && Object.keys(filter).length > 0) {
-    varDefs.push(`$filter: ${config.filterInputType}`);
-    queryArgs.push('filter: $filter');
-    variables.filter = filter;
+    queryArgs.push(`filter: ${toGraphQLLiteral(filter)}`);
   }
 
   if (orderBy && Object.keys(orderBy).length > 0) {
-    varDefs.push(`$orderBy: ${config.orderByInputType}`);
-    queryArgs.push('orderBy: $orderBy');
-    variables.orderBy = orderBy;
-  }
-
-  // groupBy 與 aggregations 使用 inline arguments（無對應 variable type）
-  if (groupBy && groupBy.length > 0) {
-    // groupBy fields are enum values — no quotes
-    queryArgs.push(`groupBy: [${groupBy.filter(f => config.fields.includes(f)).join(', ')}]`);
+    queryArgs.push(`orderBy: ${toGraphQLLiteral(orderBy)}`);
   }
 
   // 決定回傳欄位
@@ -192,14 +172,14 @@ export function buildQuery(resolverKey, params = {}) {
   // 建構 items 部分
   const itemsBlock = selectedFields.join('\n          ');
 
-  // 建構 groupBy selection 部分
+  // 建構 groupBy 部分
   let groupByBlock = '';
   if (groupBy && groupBy.length > 0) {
     const groupByFields = groupBy.filter(f => config.fields.includes(f));
     const aggBlock = buildAggregationBlock(aggregations, config.numericFields);
 
     groupByBlock = `
-      groupBy {
+      groupBy(fields: [${groupByFields.join(', ')}]) {
         fields {
           ${groupByFields.join('\n          ')}
         }
@@ -207,11 +187,10 @@ export function buildQuery(resolverKey, params = {}) {
       }`;
   }
 
-  // 組合完整查詢
-  const varDefsStr = varDefs.length > 0 ? `(${varDefs.join(', ')})` : '';
+  // 組合完整查詢（無 variable definitions，APIM 不支援）
   const argsStr = queryArgs.length > 0 ? `(${queryArgs.join(', ')})` : '';
 
-  const query = `query${varDefsStr} {
+  const query = `query {
     ${config.queryName}${argsStr} {
       items {
         ${itemsBlock}
@@ -222,10 +201,9 @@ export function buildQuery(resolverKey, params = {}) {
   }`;
 
   console.log('[buildQuery] resolver:', config.queryName);
-  console.log('[buildQuery] varDefs:', varDefsStr);
-  console.log('[buildQuery] variables:', JSON.stringify(variables));
+  console.log('[buildQuery] inline args:', argsStr);
 
-  return { query, variables };
+  return { query };
 }
 
 /**

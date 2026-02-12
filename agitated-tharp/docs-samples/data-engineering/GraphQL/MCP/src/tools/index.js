@@ -52,11 +52,15 @@ export function registerAllTools(server) {
       continue;
     }
 
+    // MCP SDK expects a ZodRawShape (plain object of Zod types), not a ZodObject.
+    // If tool.parameters is a z.object(), extract .shape; otherwise use as-is.
+    const schema = tool.parameters.shape ?? tool.parameters;
+
     // register main name
     server.tool(
       tool.name,
       tool.description,
-      tool.parameters,
+      schema,
       tool.handler
     );
     console.log(`Registered tool: ${tool.name}`);
@@ -68,7 +72,7 @@ export function registerAllTools(server) {
         server.tool(
           camelAlias,
           `${tool.description} (alias for ${tool.name})`,
-          tool.parameters,
+          schema,
           tool.handler
         );
         console.log(`Registered tool alias: ${camelAlias} -> ${tool.name}`);

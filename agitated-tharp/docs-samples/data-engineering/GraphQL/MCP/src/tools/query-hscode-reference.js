@@ -90,7 +90,7 @@ export const parameters = z.object({
 export async function handler(params) {
   try {
     const first = Math.min(params.first || config.defaultPageSize, config.maxPageSize);
-    const { query, variables } = buildQuery('UNION_REF_HSCODE', {
+    const { query } = buildQuery('UNION_REF_HSCODE', {
       ...params,
       first,
     });
@@ -99,7 +99,6 @@ export async function handler(params) {
       endpoint: config.graphqlEndpoint,
       subscriptionKey: config.subscriptionKey,
       query,
-      variables,
     });
 
     return {

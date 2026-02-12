@@ -126,7 +126,7 @@ export const parameters = z.object({
 export async function handler(params) {
   try {
     const first = Math.min(params.first || config.defaultPageSize, config.maxPageSize);
-    const { query, variables } = buildQuery('TXN_MOF_NON_PROTECT_MT', {
+    const { query } = buildQuery('TXN_MOF_NON_PROTECT_MT', {
       ...params,
       first,
     });
@@ -135,7 +135,6 @@ export async function handler(params) {
       endpoint: config.graphqlEndpoint,
       subscriptionKey: config.subscriptionKey,
       query,
-      variables,
     });
 
     return {
