@@ -33,6 +33,8 @@ export const RESOLVER_REGISTRY = {
     numericFields: ['Industry_ID'],
     scalarFieldsEnum: 'UNION_REF_HSCODEScalarFields',
     numericAggregateEnum: 'UNION_REF_HSCODENumericAggregateFields',
+    filterInputType: 'UNION_REF_HSCODEFilterInput',
+    orderByInputType: 'UNION_REF_HSCODEOrderByInput',
     description: 'HS Code 參考資料表 - 包含產業分類、HS Code 對照、中文品名等',
   },
   trade_monthly_by_code_country: {
@@ -41,6 +43,8 @@ export const RESOLVER_REGISTRY = {
     numericFields: ['YEAR', 'MONTH', 'TRADE_VALUE_USD_AMT', 'TRADE_VALUE_TWD_AMT', 'TRADE_WEIGHT', 'TRADE_QUANT', 'UNIT_PRICE_USD_PER_KG'],
     scalarFieldsEnum: 'trade_monthly_by_code_countryScalarFields',
     numericAggregateEnum: 'trade_monthly_by_code_countryNumericAggregateFields',
+    filterInputType: 'trade_monthly_by_code_countryFilterInput',
+    orderByInputType: 'trade_monthly_by_code_countryOrderByInput',
     description: '按 HS Code 與國家的月度貿易統計 - 細到單一貨品代碼層級',
   },
   trade_monthly_by_group_country: {
@@ -49,6 +53,8 @@ export const RESOLVER_REGISTRY = {
     numericFields: ['YEAR', 'MONTH', 'INDUSTRY_ID', 'TRADE_VALUE_USD_AMT', 'TRADE_VALUE_TWD_AMT', 'TRADE_WEIGHT', 'TRADE_QUANT', 'UNIT_PRICE_USD_PER_KG'],
     scalarFieldsEnum: 'trade_monthly_by_group_countryScalarFields',
     numericAggregateEnum: 'trade_monthly_by_group_countryNumericAggregateFields',
+    filterInputType: 'trade_monthly_by_group_countryFilterInput',
+    orderByInputType: 'trade_monthly_by_group_countryOrderByInput',
     description: '按產業群組與國家的月度貿易統計 - 含產業分類與地區歸屬',
   },
   UNION_REF_COUNTRY_AREA: {
@@ -57,6 +63,8 @@ export const RESOLVER_REGISTRY = {
     numericFields: ['ROW', 'AREA_sort'],
     scalarFieldsEnum: 'UNION_REF_COUNTRY_AREAScalarFields',
     numericAggregateEnum: 'UNION_REF_COUNTRY_AREANumericAggregateFields',
+    filterInputType: 'UNION_REF_COUNTRY_AREAFilterInput',
+    orderByInputType: 'UNION_REF_COUNTRY_AREAOrderByInput',
     description: '國家/地區參考資料表 - 包含 ISO3 代碼、中英文國名、所屬地區',
   },
   TXN_MOF_NON_PROTECT_MT: {
@@ -65,6 +73,8 @@ export const RESOLVER_REGISTRY = {
     numericFields: ['TRADE_VALUE_TWD_AMT', 'TRADE_QUANT', 'TRADE_WEIGHT_ORG', 'TRADE_WEIGHT', 'RATE_VALUE', 'TRADE_VALUE_USD_AMT'],
     scalarFieldsEnum: 'TXN_MOF_NON_PROTECT_MTScalarFields',
     numericAggregateEnum: 'TXN_MOF_NON_PROTECT_MTNumericAggregateFields',
+    filterInputType: 'TXN_MOF_NON_PROTECT_MTFilterInput',
+    orderByInputType: 'TXN_MOF_NON_PROTECT_MTOrderByInput',
     description: '完整交易明細資料表 - 包含每筆進出口交易的完整資訊(資料量大，查詢較慢)',
   },
 };
@@ -77,8 +87,7 @@ const GRAPHQL_ENUMS = new Set(['ASC', 'DESC']);
 /**
  * 將 JavaScript 值轉換為 GraphQL inline literal 格式
  *
- * APIM GraphQL 端點不支援 variable definitions ($var)，
- * 所有參數必須以 inline literal 嵌入 query string。
+ * 用於 groupBy enum fields 等無法使用 variable definitions 的場景。
  *
  * 轉換規則：
  * - number/boolean → 直接輸出 (2024, true)
@@ -111,10 +120,15 @@ export function toGraphQLLiteral(value) {
 }
 
 /**
- * 建構 GraphQL 查詢字串（inline arguments 模式）
+ * 建構 GraphQL 查詢字串（variable definitions 模式）
  *
- * APIM GraphQL 端點要求所有參數以 inline literal 嵌入 query，
- * 不支援 variable definitions ($first: Int 等語法)。
+ * APIM resolver policy 會忽略 client 的 query，自行建構帶 $variable 定義的 query，
+ * 並從 request body 的 "variables" 欄位讀取變數值。
+ * 因此 client 必須：
+ * 1. 在 query 中使用 $variable definitions（如 $filter: ...FilterInput）
+ * 2. 在 request body 中傳送 variables 物件
+ *
+ * 注意：groupBy 與 aggregations 使用 inline arguments（DAB/Fabric schema 無對應 variable type）。
  *
  * @param {string} resolverKey - RESOLVER_REGISTRY 中的 key
  * @param {Object} params - 查詢參數
@@ -125,7 +139,7 @@ export function toGraphQLLiteral(value) {
  * @param {string[]} [params.fields] - 指定回傳欄位 (預設回傳所有欄位)
  * @param {string[]} [params.groupBy] - 分組欄位列表
  * @param {Array} [params.aggregations] - 聚合操作列表 [{field, function}]
- * @returns {Object} { query: string }
+ * @returns {Object} { query: string, variables: Object }
  */
 export function buildQuery(resolverKey, params = {}) {
   const config = RESOLVER_REGISTRY[resolverKey];
@@ -135,23 +149,39 @@ export function buildQuery(resolverKey, params = {}) {
 
   const { first, after, filter, orderBy, fields, groupBy, aggregations } = params;
 
-  // 建構 inline arguments
-  const queryArgs = [];
+  // 建構 variable definitions 與 variables 物件
+  const varDefs = [];    // e.g. '$first: Int'
+  const queryArgs = [];  // e.g. 'first: $first'
+  const variables = {};  // e.g. { first: 50 }
 
   if (first !== undefined && first !== null) {
-    queryArgs.push(`first: ${toGraphQLLiteral(first)}`);
+    varDefs.push('$first: Int');
+    queryArgs.push('first: $first');
+    variables.first = first;
   }
 
   if (after !== undefined && after !== null) {
-    queryArgs.push(`after: ${toGraphQLLiteral(after)}`);
+    varDefs.push('$after: String');
+    queryArgs.push('after: $after');
+    variables.after = after;
   }
 
   if (filter && Object.keys(filter).length > 0) {
-    queryArgs.push(`filter: ${toGraphQLLiteral(filter)}`);
+    varDefs.push(`$filter: ${config.filterInputType}`);
+    queryArgs.push('filter: $filter');
+    variables.filter = filter;
   }
 
   if (orderBy && Object.keys(orderBy).length > 0) {
-    queryArgs.push(`orderBy: ${toGraphQLLiteral(orderBy)}`);
+    varDefs.push(`$orderBy: ${config.orderByInputType}`);
+    queryArgs.push('orderBy: $orderBy');
+    variables.orderBy = orderBy;
+  }
+
+  // groupBy 與 aggregations 使用 inline arguments（無對應 variable type）
+  if (groupBy && groupBy.length > 0) {
+    // groupBy fields are enum values — no quotes
+    queryArgs.push(`groupBy: [${groupBy.filter(f => config.fields.includes(f)).join(', ')}]`);
   }
 
   // 決定回傳欄位
@@ -162,14 +192,14 @@ export function buildQuery(resolverKey, params = {}) {
   // 建構 items 部分
   const itemsBlock = selectedFields.join('\n          ');
 
-  // 建構 groupBy 部分
+  // 建構 groupBy selection 部分
   let groupByBlock = '';
   if (groupBy && groupBy.length > 0) {
     const groupByFields = groupBy.filter(f => config.fields.includes(f));
     const aggBlock = buildAggregationBlock(aggregations, config.numericFields);
 
     groupByBlock = `
-      groupBy(fields: [${groupByFields.join(', ')}]) {
+      groupBy {
         fields {
           ${groupByFields.join('\n          ')}
         }
@@ -177,10 +207,11 @@ export function buildQuery(resolverKey, params = {}) {
       }`;
   }
 
-  // 組合完整查詢（無 variable definitions）
+  // 組合完整查詢
+  const varDefsStr = varDefs.length > 0 ? `(${varDefs.join(', ')})` : '';
   const argsStr = queryArgs.length > 0 ? `(${queryArgs.join(', ')})` : '';
 
-  const query = `query {
+  const query = `query${varDefsStr} {
     ${config.queryName}${argsStr} {
       items {
         ${itemsBlock}
@@ -191,9 +222,10 @@ export function buildQuery(resolverKey, params = {}) {
   }`;
 
   console.log('[buildQuery] resolver:', config.queryName);
-  console.log('[buildQuery] inline args:', argsStr);
+  console.log('[buildQuery] varDefs:', varDefsStr);
+  console.log('[buildQuery] variables:', JSON.stringify(variables));
 
-  return { query };
+  return { query, variables };
 }
 
 /**

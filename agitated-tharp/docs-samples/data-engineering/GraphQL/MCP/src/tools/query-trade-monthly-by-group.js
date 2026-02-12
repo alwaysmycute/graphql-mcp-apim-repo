@@ -191,12 +191,13 @@ export const execute = async (params) => {
 
   try {
     const RESOLVER = 'trade_monthly_by_group_country';
-    const { query } = buildQuery(RESOLVER, normalizedParams);
+    const { query, variables } = buildQuery(RESOLVER, normalizedParams);
 
     const result = await executeGraphQL({
       endpoint: config.graphqlEndpoint,
       subscriptionKey: config.subscriptionKey,
       query,
+      variables,
     });
 
     return {

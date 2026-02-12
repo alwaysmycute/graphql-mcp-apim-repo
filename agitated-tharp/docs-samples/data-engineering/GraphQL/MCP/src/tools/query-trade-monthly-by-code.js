@@ -112,7 +112,7 @@ export const parameters = z.object({
 export async function handler(params) {
   try {
     const first = Math.min(params.first || config.defaultPageSize, config.maxPageSize);
-    const { query, variables } = buildQuery('trade_monthly_by_group_countries', {
+    const { query, variables } = buildQuery('trade_monthly_by_code_country', {
       ...params,
       first,
     });
